@@ -35,6 +35,11 @@ class Premailer
   include HtmlToPlainText
   include CssParser
 
+<<<<<<< HEAD
+  VERSION = '1.7.5'
+
+=======
+>>>>>>> 1.9
   CLIENT_SUPPORT_FILE = File.dirname(__FILE__) + '/../../misc/client_support.yaml'
 
   # Unmergable selectors regexp.
@@ -284,7 +289,7 @@ protected
       tags = @doc.search("link[@rel='stylesheet']:not([@data-premailer='ignore'])", "//style[not(contains(@data-premailer,'ignore'))]")
     else
       tags = @doc.search("link[@rel='stylesheet']:not([@data-premailer='ignore']), style:not([@data-premailer='ignore'])")
->>>>>>> 8e6c5502cc790d4512f9dc09bd5e3e6a672010ff
+>>>>>>> 1.9
     end
     if tags
       tags.each do |tag|
