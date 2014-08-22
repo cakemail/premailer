@@ -10,26 +10,37 @@ module HtmlToPlainText
   def convert_to_text(html, line_length = 65, from_charset = 'UTF-8')
     txt = html
 
-    # decode HTML entities
-    he = HTMLEntities.new
-    txt = he.decode(txt)
-    
-    # replace image by their alt attribute
-    txt.gsub!(/<img.+?alt=\"([^\"]*)\"[^>]*\/>/i, '\1')
+    # replace images with their alt attributes
+    # for img tags with "" for attribute quotes
+    # with or without closing tag
+    # eg. the following formats:
+    # <img alt="" />
+    # <img alt="">
+    txt.gsub!(/<img.+?alt=\"([^\"]*)\"[^>]*\>/i, '\1')
 
-    # replace image by their alt attribute
-    txt.gsub!(/<img.+?alt=\"([^\"]*)\"[^>]*\/>/i, '\1')
-    txt.gsub!(/<img.+?alt='([^\']*)\'[^>]*\/>/i, '\1')
+    # for img tags with '' for attribute quotes
+    # with or without closing tag
+    # eg. the following formats:
+    # <img alt='' />
+    # <img alt=''>
+    txt.gsub!(/<img.+?alt=\'([^\']*)\'[^>]*\>/i, '\1')
 
     # links
-    txt.gsub!(/<a.+?href=\"([^\"]*)\"[^>]*>(.+?)<\/a>/i) do |s|
-      $2.strip + ' ( ' + $1.strip + ' )'
+    txt.gsub!(/<a.+?href=\"(mailto:)?([^\"]*)\"[^>]*>((.|\s)*?)<\/a>/i) do |s|
+      if $3.empty?
+        ''
+      else
+        $3.strip + ' ( ' + $2.strip + ' )'
+      end
     end
 
-    txt.gsub!(/<a.+?href='([^\']*)\'[^>]*>(.+?)<\/a>/i) do |s|
-      $2.strip + ' ( ' + $1.strip + ' )'
+    txt.gsub!(/<a.+?href='(mailto:)?([^\']*)\'[^>]*>((.|\s)*?)<\/a>/i) do |s|
+      if $3.empty?
+        ''
+      else
+        $3.strip + ' ( ' + $2.strip + ' )'
+      end
     end
-
 
     # handle headings (H1-H6)
     txt.gsub!(/(<\/h[1-6]>)/i, "\n\\1") # move closing tags to new lines
@@ -72,8 +83,12 @@ module HtmlToPlainText
     # strip remaining tags
     txt.gsub!(/<\/?[^>]*>/, '')
 
+    # decode HTML entities
+    he = HTMLEntities.new
+    txt = he.decode(txt)
+
     txt = word_wrap(txt, line_length)
-    
+
     # remove linefeeds (\r\n and \r -> \n)
     txt.gsub!(/\r\n?/, "\n")
 
@@ -87,7 +102,7 @@ module HtmlToPlainText
 
     # no more than two consecutive spaces
     txt.gsub!(/ {2,}/, " ")
-    
+
     # the word messes up the parens
     txt.gsub!(/\([ \n](http[^)]+)[\n ]\)/) do |s|
       "( " + $1 + " )"

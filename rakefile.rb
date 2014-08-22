@@ -1,27 +1,19 @@
-$:.unshift File.expand_path('../lib', __FILE__)
-
 require 'rake'
 require 'rake/testtask'
-require 'rdoc/task'
-require 'rubygems/package_task'
-require 'fileutils'
-require 'premailer'
+require "bundler/gem_tasks"
+require 'yard'
 
-def gemspec
- @gemspec ||= begin
-   file = File.expand_path('../premailer.gemspec', __FILE__)
-   eval(File.read(file), binding, file)
- end
-end
+GEM_ROOT = File.dirname(__FILE__).freeze  unless defined?(GEM_ROOT)
 
-Gem::PackageTask.new(gemspec) do |pkg|
-  pkg.need_tar = true
-end
+lib_path = File.expand_path('lib', GEM_ROOT)
+$LOAD_PATH.unshift(lib_path)  unless $LOAD_PATH.include? lib_path
 
-task :default => [:test]
+require 'premailer/version'
 
 desc 'Parse a URL and write out the output.'
 task :inline do
+  require 'premailer'
+
   url = ENV['url']
   output = ENV['output']
   
@@ -31,15 +23,17 @@ task :inline do
   end
 
   premailer = Premailer.new(url, :warn_level => Premailer::Warnings::SAFE, :verbose => true, :adapter => :nokogiri)
-  fout = File.open(output, "w")
-  fout.puts premailer.to_inline_css
-  fout.close
+  File.open(output, "w") do |fout|
+    fout.puts premailer.to_inline_css
+  end
 
   puts "Succesfully parsed '#{url}' into '#{output}'"
   puts premailer.warnings.length.to_s + ' CSS warnings were found'
 end
 
 task :text do
+  require 'premailer'
+
   url = ENV['url']
   output = ENV['output']
   
@@ -49,9 +43,9 @@ task :text do
   end
 
   premailer = Premailer.new(url, :warn_level => Premailer::Warnings::SAFE)
-  fout = File.open(output, "w")
-  fout.puts premailer.to_plain_text
-  fout.close
+  File.open(output, "w") do |fout|
+    fout.puts premailer.to_plain_text
+  end
   
   puts "Succesfully parsed '#{url}' into '#{output}'"
 end
@@ -61,8 +55,8 @@ Rake::TestTask.new do |t|
   t.verbose = false
 end
 
-RDoc::Task.new do |rd|
-  rd.main = "README.rdoc"
-  rd.rdoc_files.include("README.rdoc", "LICENSE.rdoc", "lib/**/*.rb")
-  rd.title = 'Premailer Documentation'
+YARD::Rake::YardocTask.new do |yard|
+  yard.options << "--title='Premailer #{Premailer::VERSION} Documentation'"
 end
+
+task :default => [:test]

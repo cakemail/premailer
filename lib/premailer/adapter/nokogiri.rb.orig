@@ -1,12 +1,13 @@
-require 'hpricot'
+require 'nokogiri'
 
 class Premailer
   module Adapter
-    # Hpricot adapter
-    module Hpricot
+    # Nokogiri adapter
+    module Nokogiri
 
       # Merge CSS into the HTML document.
-      # @return [String] HTML.
+      #
+      # @return [String] an HTML.
       def to_inline_css
         doc = @processed_doc
         @unmergable_rules = CssParser::Parser.new
@@ -39,10 +40,6 @@ class Premailer
               # than one element.  Added to work around dodgy generated code.
               selector.gsub!(/\A\#([\w_\-]+)\Z/, '*[@id=\1]')
 
-              # convert attribute selectors to hpricot's format
-              selector.gsub!(/\[([\w]+)\]/, '[@\1]')
-              selector.gsub!(/\[([\w]+)([\=\~\^\$\*]+)([\w\s]+)\]/, '[@\1\2\'\3\']')
-
               doc.search(selector).each do |el|
                 if el.elem? and (el.name != 'head' and el.parent.name != 'head')
                   # Add a style attribute or append to the existing one
@@ -50,7 +47,7 @@ class Premailer
                   el['style'] = (el.attributes['style'].to_s ||= '') + ' ' + block
                 end
               end
-            rescue ::Hpricot::Error, RuntimeError, ArgumentError
+            rescue  ::Nokogiri::SyntaxError, RuntimeError, ArgumentError
               $stderr.puts "CSS syntax error with selector: #{selector}" if @options[:verbose]
               next
             end
@@ -58,12 +55,11 @@ class Premailer
         end
 
         # Remove script tags
+<<<<<<< HEAD
         if @options[:remove_script_tags]
-          doc.search("script").remove
-        end
-
-        # Remove script tags
+=======
         if @options[:remove_scripts]
+>>>>>>> 1.9
           doc.search("script").remove
         end
 
@@ -72,15 +68,14 @@ class Premailer
           style = el.attributes['style'].to_s
 
           declarations = []
-
           style.scan(/\[SPEC\=([\d]+)\[(.[^\]\]]*)\]\]/).each do |declaration|
             rs = CssParser::RuleSet.new(nil, declaration[1].to_s, declaration[0].to_i)
             declarations << rs
           end
+
           # Perform style folding
           merged = CssParser.merge(declarations)
           merged.expand_shorthand!
-          merged.create_shorthand!
 
           # Duplicate CSS attributes as HTML attributes
           if Premailer::RELATED_ATTRIBUTES.has_key?(el.name)
@@ -89,19 +84,20 @@ class Premailer
             end
           end
 
+          # Collapse multiple rules into one as much as possible.
+          merged.create_shorthand!
+
           # write the inline STYLE attribute
-          el['style'] = Premailer.escape_string(merged.declarations_to_s)
+          el['style'] = Premailer.escape_string(merged.declarations_to_s).split(';').map(&:strip).sort.join('; ')
         end
 
         doc = write_unmergable_css_rules(doc, @unmergable_rules)
 
         if @options[:remove_classes] or @options[:remove_comments]
-          doc.search('*').each do |el|
+          doc.traverse do |el|
             if el.comment? and @options[:remove_comments]
-              lst = el.parent.children
-              el.parent = nil
-              lst.delete(el)
-            elsif el.elem?
+              el.remove
+            elsif el.element?
               el.remove_attribute('class') if @options[:remove_classes]
             end
           end
@@ -127,27 +123,33 @@ class Premailer
         end
 
         @processed_doc = doc
-
-        @processed_doc.to_original_html
+        if is_xhtml?
+          # we don't want to encode carriage returns
+          @processed_doc.to_xhtml(:encoding => @options[:output_encoding]).gsub(/&\#(xD|13);/i, "\r")
+        else
+          @processed_doc.to_html(:encoding => @options[:output_encoding])
+        end
       end
 
       # Create a <tt>style</tt> element with un-mergable rules (e.g. <tt>:hover</tt>)
       # and write it into the <tt>body</tt>.
       #
-      # <tt>doc</tt> is an Hpricot document and <tt>unmergable_css_rules</tt> is a Css::RuleSet.
+      # <tt>doc</tt> is an Nokogiri document and <tt>unmergable_css_rules</tt> is a Css::RuleSet.
       #
-      # @return [::Hpricot] a document.
+      # @return [::Nokogiri::XML] a document.
       def write_unmergable_css_rules(doc, unmergable_rules) # :nodoc:
         styles = unmergable_rules.to_s
 
         unless styles.empty?
-          style_tag = "\n<style type=\"text/css\">\n#{styles}</style>\n"
-          if head = doc.search('head')
-            head.append(style_tag)
-          elsif body = doc.search('body')
-            body.append(style_tag)
+          style_tag = "<style type=\"text/css\">\n#{styles}</style>"
+          if body = doc.search('body')
+            if doc.at_css('body').children && !doc.at_css('body').children.empty?
+              doc.at_css('body').children.before(::Nokogiri::XML.fragment(style_tag))
+            else
+              doc.at_css('body').add_child(::Nokogiri::XML.fragment(style_tag))
+            end
           else
-            doc.inner_html= doc.inner_html << style_tag
+            doc.inner_html = style_tag += doc.inner_html
           end
         end
         doc
@@ -158,27 +160,30 @@ class Premailer
       #
       # If present, uses the <body> element as its base; otherwise uses the whole document.
       #
-      # @return [String] Plain text.
+      # @return [String] a plain text.
       def to_plain_text
         html_src = ''
         begin
-          html_src = @doc.search("body").inner_html
+          html_src = @doc.at("body").inner_html
         rescue; end
 
         html_src = @doc.to_html unless html_src and not html_src.empty?
         convert_to_text(html_src, @options[:line_length], @html_encoding)
       end
 
-
       # Gets the original HTML as a string.
       # @return [String] HTML.
       def to_s
-        @doc.to_original_html
+        if is_xhtml?
+          @doc.to_xhtml(:encoding => nil)
+        else
+          @doc.to_html(:encoding => nil)
+        end
       end
 
-      # Load the HTML file and convert it into an Hpricot document.
+      # Load the HTML file and convert it into an Nokogiri document.
       #
-      # @return [::Hpricot] a document.
+      # @return [::Nokogiri::XML] a document.
       def load_html(input) # :nodoc:
         thing = nil
 
@@ -192,11 +197,37 @@ class Premailer
           thing = open(input)
         end
 
-        # TODO: deal with Hpricot seg faults on empty input
-        thing ? Hpricot(thing) : nil
+        if thing.respond_to?(:read)
+          thing = thing.read
+        end
+
+        return nil unless thing
+        doc = nil
+
+        # Handle HTML entities
+        if @options[:replace_html_entities] == true and thing.is_a?(String)
+          HTML_ENTITIES.map do |entity, replacement|
+            thing.gsub! entity, replacement
+          end
+        end
+        # Default encoding is ASCII-8BIT (binary) per http://groups.google.com/group/nokogiri-talk/msg/0b81ef0dc180dc74
+        # However, we really don't want to hardcode this. ASCII-8BIG should be the default, but not the only option.
+        if thing.is_a?(String) and RUBY_VERSION =~ /1.9/
+          thing = thing.force_encoding(@options[:input_encoding]).encode!
+          doc = ::Nokogiri::HTML(thing, nil, @options[:input_encoding]) {|c| c.recover }
+        else
+          default_encoding = RUBY_PLATFORM == 'java' ? nil : 'BINARY'
+          doc = ::Nokogiri::HTML(thing, nil, @options[:input_encoding] || default_encoding) {|c| c.recover }
+        end
+
+        # Fix for removing any CDATA tags inserted per https://github.com/sparklemotion/nokogiri/issues/311
+        doc.search("style").children.each do |child|
+          child.swap(child.text()) if child.cdata?
+        end
+
+        doc
       end
 
     end
   end
 end
-
