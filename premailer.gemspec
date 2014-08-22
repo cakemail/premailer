@@ -7,7 +7,7 @@ require 'premailer/version'
 
 Gem::Specification.new do |s|
   s.name     = "premailer"
-  s.version  = Premailer::VERSION.dup
+  s.version  = "1.9.1"
   s.date = Time.now.strftime('%Y-%m-%d')
   s.summary  = "Preflight for HTML e-mail."
   s.email    = "code@dunae.ca"
