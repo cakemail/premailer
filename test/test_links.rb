@@ -121,6 +121,18 @@ class TestLinks < Premailer::TestCase
     assert_equal 'http://example.com/path', Premailer.resolve_link(' path', base_uri)
   end
 
+  def test_resolving_urls_from_html_string
+    # The inner URI is on its own line to ensure that the impl doesn't match
+    # URIs based on start of line.
+    base_uri = "<html><head></head><body>\nhttp://example.com/\n</body>"
+    ['test.html', '/test.html', './test.html',
+     'test/../test.html', 'test/../test/../test.html'].each do |q|
+      assert_nothing_raised do
+        Premailer.resolve_link(q, base_uri)
+      end
+    end
+  end
+
   def test_resolving_urls_in_doc
     # force Nokogiri since this consistenly segfaults with Hpricot
     base_file = File.dirname(__FILE__) + '/files/base.html'
@@ -138,5 +150,48 @@ class TestLinks < Premailer::TestCase
     
     assert_equal 'https://my.example.com:8080/', pdoc.at('#l01').attributes['href'].to_s
     assert_equal 'https://my.example.com:8080/images/', pdoc.at('#l04').attributes['href'].to_s
+  end
+
+  def test_convertable_inline_links
+    convertable = [
+      'my/path/to',
+      'other/path',
+      '/'
+    ]
+
+    html = convertable.collect {|url| "<a href='#{url}'>Link</a>" }
+    premailer = Premailer.new(html.to_s, :base_url => "http://example.com", :with_html_string => true)
+    
+    premailer.processed_doc.search('a').each do |el|
+      href = el.attributes['href'].to_s
+      assert(href =~ /http:\/\/example.com/, "link #{href} is not absolute")
+    end
+  end
+
+  def test_non_convertable_inline_links
+    not_convertable = [
+      '%DONOTCONVERT%',
+      '{DONOTCONVERT}',
+      '[DONOTCONVERT]',
+      '<DONOTCONVERT>',
+      '{@msg-txturl}',
+      '[[!unsubscribe]]',
+      '#relative', 
+      'tel:5555551212',
+      'mailto:premailer@example.com',
+      'ftp://example.com',
+      'gopher://gopher.floodgap.com/1/fun/twitpher',
+      'cid:13443452066.10392logo.jpeg@inline_attachment'
+    ]
+    
+    html = not_convertable.collect {|url| "<a href='#{url}'>Link</a>" }
+
+    premailer = Premailer.new(html.to_s, :base_url => "example.com", :with_html_string => true)
+    premailer.to_inline_css
+    
+    premailer.processed_doc.search('a').each do |el|
+      href = el.attributes['href'].to_s
+      assert not_convertable.include?(href), "link #{href} should not be converted: see #{not_convertable.inspect}"
+    end
   end
 end

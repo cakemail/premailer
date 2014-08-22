@@ -2,11 +2,12 @@ require 'nokogiri'
 
 class Premailer
   module Adapter
+    # Nokogiri adapter
     module Nokogiri
 
       # Merge CSS into the HTML document.
       #
-      # Returns a string.
+      # @return [String] an HTML.
       def to_inline_css
         doc = @processed_doc
         @unmergable_rules = CssParser::Parser.new
@@ -18,17 +19,23 @@ class Premailer
         end
 
         # Iterate through the rules and merge them into the HTML
-        @css_parser.each_selector(:all) do |selector, declaration, specificity|
+        @css_parser.each_selector(:all) do |selector, declaration, specificity, media_types|
           # Save un-mergable rules separately
           selector.gsub!(/:link([\s]*)+/i) {|m| $1 }
 
           # Convert element names to lower case
           selector.gsub!(/([\s]|^)([\w]+)/) {|m| $1.to_s + $2.to_s.downcase }
 
-          if selector =~ Premailer::RE_UNMERGABLE_SELECTORS
-            @unmergable_rules.add_rule_set!(CssParser::RuleSet.new(selector, declaration)) unless @options[:preserve_styles]
+          if Premailer.is_media_query?(media_types) || selector =~ Premailer::RE_UNMERGABLE_SELECTORS
+            @unmergable_rules.add_rule_set!(CssParser::RuleSet.new(selector, declaration), media_types) unless @options[:preserve_styles]
           else
             begin
+              if selector =~ Premailer::RE_RESET_SELECTORS
+                # this is in place to preserve the MailChimp CSS reset: http://github.com/mailchimp/Email-Blueprints/
+                # however, this doesn't mean for testing pur
+                @unmergable_rules.add_rule_set!(CssParser::RuleSet.new(selector, declaration))  unless !@options[:preserve_reset]
+              end
+
               # Change single ID CSS selectors into xpath so that we can match more
               # than one element.  Added to work around dodgy generated code.
               selector.gsub!(/\A\#([\w_\-]+)\Z/, '*[@id=\1]')
@@ -45,6 +52,11 @@ class Premailer
               next
             end
           end
+        end
+
+        # Remove script tags
+        if @options[:remove_scripts]
+          doc.search("script").remove
         end
 
         # Read STYLE attributes and perform folding
@@ -64,15 +76,15 @@ class Premailer
           # Duplicate CSS attributes as HTML attributes
           if Premailer::RELATED_ATTRIBUTES.has_key?(el.name)
             Premailer::RELATED_ATTRIBUTES[el.name].each do |css_att, html_att|
-              el[html_att] = merged[css_att].gsub(/;$/, '').strip if el[html_att].nil? and not merged[css_att].empty?
+              el[html_att] = merged[css_att].gsub(/url\('(.*)'\)/,'\1').gsub(/;$|\s*!important/, '').strip if el[html_att].nil? and not merged[css_att].empty?
             end
           end
 
-          merged.create_dimensions_shorthand!
-          merged.create_border_shorthand!
+          # Collapse multiple rules into one as much as possible.
+          merged.create_shorthand!
 
           # write the inline STYLE attribute
-          el['style'] = Premailer.escape_string(merged.declarations_to_s)
+          el['style'] = Premailer.escape_string(merged.declarations_to_s).split(';').map(&:strip).sort.join('; ')
         end
 
         doc = write_unmergable_css_rules(doc, @unmergable_rules)
@@ -109,9 +121,9 @@ class Premailer
         @processed_doc = doc
         if is_xhtml?
           # we don't want to encode carriage returns
-          @processed_doc.to_xhtml(:encoding => nil).gsub(/&\#xD;/i, "\r")
+          @processed_doc.to_xhtml(:encoding => @options[:output_encoding]).gsub(/&\#(xD|13);/i, "\r")
         else
-          @processed_doc.to_html
+          @processed_doc.to_html(:encoding => @options[:output_encoding])
         end
       end
 
@@ -120,17 +132,18 @@ class Premailer
       #
       # <tt>doc</tt> is an Nokogiri document and <tt>unmergable_css_rules</tt> is a Css::RuleSet.
       #
-      # Returns an Nokogiri document.
+      # @return [::Nokogiri::XML] a document.
       def write_unmergable_css_rules(doc, unmergable_rules) # :nodoc:
-        styles = ''
-        unmergable_rules.each_selector(:all, :force_important => true) do |selector, declarations, specificity|
-          styles += "#{selector} { #{declarations} }\n"
-        end
-        
+        styles = unmergable_rules.to_s
+
         unless styles.empty?
-          style_tag = "<style type=\"text/css\">\n#{styles}></style>"
+          style_tag = "<style type=\"text/css\">\n#{styles}</style>"
           if body = doc.search('body')
-            doc.at_css('body').children.before(::Nokogiri::XML.fragment(style_tag))            
+            if doc.at_css('body').children && !doc.at_css('body').children.empty?
+              doc.at_css('body').children.before(::Nokogiri::XML.fragment(style_tag))
+            else
+              doc.at_css('body').add_child(::Nokogiri::XML.fragment(style_tag))
+            end
           else
             doc.inner_html = style_tag += doc.inner_html
           end
@@ -143,7 +156,7 @@ class Premailer
       #
       # If present, uses the <body> element as its base; otherwise uses the whole document.
       #
-      # Returns a string.
+      # @return [String] a plain text.
       def to_plain_text
         html_src = ''
         begin
@@ -154,7 +167,8 @@ class Premailer
         convert_to_text(html_src, @options[:line_length], @html_encoding)
       end
 
-      # Returns the original HTML as a string.
+      # Gets the original HTML as a string.
+      # @return [String] HTML.
       def to_s
         if is_xhtml?
           @doc.to_xhtml(:encoding => nil)
@@ -165,17 +179,17 @@ class Premailer
 
       # Load the HTML file and convert it into an Nokogiri document.
       #
-      # Returns an Nokogiri document.
+      # @return [::Nokogiri::XML] a document.
       def load_html(input) # :nodoc:
         thing = nil
 
         # TODO: duplicate options
         if @options[:with_html_string] or @options[:inline] or input.respond_to?(:read)
           thing = input
-				elsif @is_local_file
+        elsif @is_local_file
           @base_dir = File.dirname(input)
           thing = File.open(input, 'r')
-				else
+        else
           thing = open(input)
         end
 
@@ -186,16 +200,28 @@ class Premailer
         return nil unless thing
         doc = nil
 
+        # Handle HTML entities
+        if @options[:replace_html_entities] == true and thing.is_a?(String)
+          HTML_ENTITIES.map do |entity, replacement|
+            thing.gsub! entity, replacement
+          end
+        end
         # Default encoding is ASCII-8BIT (binary) per http://groups.google.com/group/nokogiri-talk/msg/0b81ef0dc180dc74
+        # However, we really don't want to hardcode this. ASCII-8BIG should be the default, but not the only option.
         if thing.is_a?(String) and RUBY_VERSION =~ /1.9/
-          thing = thing.force_encoding('ASCII-8BIT').encode!
-          doc = ::Nokogiri::HTML(thing) {|c| c.recover }
+          thing = thing.force_encoding(@options[:input_encoding]).encode!
+          doc = ::Nokogiri::HTML(thing, nil, @options[:input_encoding]) {|c| c.recover }
         else
           default_encoding = RUBY_PLATFORM == 'java' ? nil : 'BINARY'
-          doc = ::Nokogiri::HTML(thing, nil, @options[:inputencoding] || default_encoding) {|c| c.recover }
+          doc = ::Nokogiri::HTML(thing, nil, @options[:input_encoding] || default_encoding) {|c| c.recover }
         end
 
-        return doc
+        # Fix for removing any CDATA tags inserted per https://github.com/sparklemotion/nokogiri/issues/311
+        doc.search("style").children.each do |child|
+          child.swap(child.text()) if child.cdata?
+        end
+
+        doc
       end
 
     end
