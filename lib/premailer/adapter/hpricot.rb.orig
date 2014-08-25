@@ -58,11 +58,14 @@ class Premailer
         end
 
         # Remove script tags
+<<<<<<< HEAD
+=======
         if @options[:remove_script_tags]
           doc.search("script").remove
         end
 
         # Remove script tags
+>>>>>>> feature/remove_script_tags
         if @options[:remove_scripts]
           doc.search("script").remove
         end

@@ -44,8 +44,16 @@ opts = OptionParser.new do |opts|
     options[:remove_classes] = v
   end
 
+  opts.on("-j", "--remove-scripts", "Remove <script> elements") do |v|
+    options[:remove_classes] = v
+  end
+
   opts.on("-l", "--line-length N", Integer, "Line length for plaintext (default: #{options[:line_length].to_s})") do |v|
     options[:line_length] = v
+  end
+
+  opts.on("-e", "--entities", "Output HTML entities instead of UTF-8 when using Nokogiri") do |v|
+    options[:output_encoding] = "US-ASCII"
   end
 
   opts.on("-d", "--io-exceptions", "Abort on I/O errors") do |v|
@@ -73,10 +81,12 @@ $stderr.puts "Processing in #{mode} mode with options #{options.inspect}" if opt
 premailer = nil
 input = nil
 
-if $stdin.tty? or STDIN.fcntl(Fcntl::F_GETFL, 0) == 0
+if ARGV.size > 0
+  # Executed via command line or shell script
   input = ARGV.shift
 else
-  input = $stdin
+  # Called in piped command
+  input = $stdin.read
   options[:with_html_string] = true
 end
 

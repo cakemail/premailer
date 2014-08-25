@@ -35,6 +35,11 @@ class Premailer
   include HtmlToPlainText
   include CssParser
 
+<<<<<<< HEAD
+  VERSION = '1.7.5'
+
+=======
+>>>>>>> 1.9
   CLIENT_SUPPORT_FILE = File.dirname(__FILE__) + '/../../misc/client_support.yaml'
 
   # Unmergable selectors regexp.
@@ -274,10 +279,17 @@ protected
 
     # Load CSS included in <tt>style</tt> and <tt>link</tt> tags from an HTML document.
   def load_css_from_html! # :nodoc:
+<<<<<<< HEAD
+    if (@adapter_class == 'Nokogiri')
+      tags = @doc.search("link[@rel='stylesheet']", "//style[not(contains(@data-premailer,'ignore'))]")
+    else
+      tags = @doc.search("link[@rel='stylesheet'], style:not([@data-premailer='ignore'])")
+=======
     if (@options[:adapter] == :nokogiri)
       tags = @doc.search("link[@rel='stylesheet']:not([@data-premailer='ignore'])", "//style[not(contains(@data-premailer,'ignore'))]")
     else
       tags = @doc.search("link[@rel='stylesheet']:not([@data-premailer='ignore']), style:not([@data-premailer='ignore'])")
+>>>>>>> 1.9
     end
     if tags
       tags.each do |tag|
